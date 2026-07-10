@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Sci-Runner: พืชใบเลี้ยงเดี่ยว & ใบเลี้ยงคู่</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;600;700&display=swap');
+        body {
+            font-family: 'Prompt', sans-serif;
+            overflow: hidden;
+            background-color: #0d0e15;
+        }
+        .neon-glow {
+            text-shadow: 0 0 10px rgba(0, 255, 204, 0.6), 0 0 20px rgba(0, 255, 204, 0.4);
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.07);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+        .shake {
+            animation: shakeAnim 0.4s ease-in-out;
+        }
+        @keyframes shakeAnim {
+            0%, 100% { transform: translate(0, 0); }
+            20%, 60% { transform: translate(-10px, 5px); }
+            40%, 80% { transform: translate(10px, -5px); }
+        }
+        .flash-green { animation: flashGreenAnim 0.5s ease-out; }
+        @keyframes flashGreenAnim {
+            0% { background: rgba(0, 255, 100, 0.4); }
+            100% { background: rgba(0,0,0,0); }
+        }
+        .flash-red { animation: flashRedAnim 0.5s ease-out; }
+        @keyframes flashRedAnim {
+            0% { background: rgba(255, 0, 50, 0.4); }
+            100% { background: rgba(0,0,0,0); }
+        }
+    </style>
+</head>
+<body class="relative w-screen h-screen text-white select-none">
+
+    <div id="flash-effect" class="absolute inset-0 z-40 pointer-events-none transition-all duration-100"></div>
+
+    <div id="game-container" class="relative w-full h-full">
+        <video id="video" class="hidden" autoplay playsinline muted></video>
+        <canvas id="canvas" class="absolute inset-0 w-full h-full object-cover z-0 scale-x-[-1]"></canvas>
+
+        <div id="loading-screen" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/90 text-center p-4">
+            <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-cyan-400 mb-4"></div>
+            <h1 class="text-3xl font-bold text-cyan-400 neon-glow mb-2">AR พืชใบเลี้ยงเดี่ยว & ใบเลี้ยงคู่</h1>
+            <p class="text-gray-400 max-w-md">กำลังโหลดระบบ AI ตรวจจับร่างกายและเข้าถึงกล้อง... กรุณาเปิดสิทธิ์การใช้กล้องถ่ายรูป</p>
+        </div>
+
+        <div class="absolute top-0 inset-x-0 z-30 p-4 flex justify-between items-start pointer-events-none">
+            <div class="glass-panel p-4 rounded-2xl flex flex-col gap-2 pointer-events-auto">
+                <div class="text-xl font-bold flex items-center gap-1">
+                    <span>ชีวิต:</span>
+                    <span id="ui-hearts" class="text-red-500 tracking-wider">❤️ ❤️ ❤️</span>
+                </div>
+                <div class="text-2xl font-bold text-yellow-400">คะแนน: <span id="ui-score">0</span></div>
+            </div>
+
+            <div class="glass-panel px-8 py-4 rounded-2xl text-center max-w-xl pointer-events-auto flex flex-col items-center">
+                <div class="text-sm font-semibold text-cyan-400 uppercase tracking-widest mb-1">คำถามข้อที่ <span id="ui-current-question">1</span>/15</div>
+                <div id="ui-question" class="text-3xl font-bold mb-2 text-white">กำลังเริ่มเกม...</div>
+                <div class="w-64 bg-gray-700/50 h-3 rounded-full overflow-hidden border border-white/20">
+                    <div id="ui-timer-bar" class="bg-gradient-to-r from-cyan-400 to-emerald-400 h-full w-full transition-all duration-100 ease-linear"></div>
+                </div>
+            </div>
+
+            <button id="btn-sound" class="glass-panel p-4 rounded-2xl font-bold text-lg cursor-pointer pointer-events-auto hover:bg-white/25 transition">
+                🔊 เปิดเสียง
+            </button>
+        </div>
+
+        <div id="float-score-container" class="absolute inset-0 pointer-events-none z-30"></div>
+
+        <div class="absolute inset-x-0 bottom-0 h-1/3 z-10 grid grid-cols-3 pointer-events-none">
+            <div class="border-r border-white/10 bg-gradient-to-t from-cyan-500/5 to-transparent"></div>
+            <div class="border-r border-white/10 bg-gradient-to-t from-purple-500/5 to-transparent"></div>
+            <div class="bg-gradient-to-t from-emerald-500/5 to-transparent"></div>
+        </div>
+    </div>
+
+    <div id="end-screen" class="hidden absolute inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4">
+        <div class="glass-panel p-8 rounded-3xl text-center max-w-lg w-full border border-cyan-500/30 shadow-2xl">
+            <h2 id="end-title" class="text-4xl font-bold text-cyan-400 neon-glow mb-6">จบเกม!</h2>
+            
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <div class="bg-white/5 p-4 rounded-xl">
+                    <div class="text-sm text-gray-400">คะแนนรวม</div>
+                    <div id="end-score" class="text-3xl font-bold text-yellow-400">0</div>
+                </div>
+                <div class="bg-white/5 p-4 rounded-xl">
+                    <div class="text-sm text-gray-400">ความแม่นยำ</div>
+                    <div id="end-accuracy" class="text-3xl font-bold text-emerald-400">0%</div>
+                </div>
+                <div class="bg-white/5 p-4 rounded-xl">
+                    <div class="text-sm text-gray-400">ตอบถูก</div>
+                    <div id="end-correct" class="text-2xl font-bold text-green-400">0 ข้อ</div>
+                </div>
+                <div class="bg-white/5 p-4 rounded-xl">
+                    <div class="text-sm text-gray-400">ตอบผิด/ข้าม</div>
+                    <div id="end-wrong" class="text-2xl font-bold text-red-400">0 ข้อ</div>
+                </div>
+            </div>
+
+            <button id="btn-restart" class="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold py-4 px-6 rounded-2xl text-xl shadow-lg shadow-cyan-500/20 transform active:scale-95 transition cursor-pointer">
+                เล่นใหม่อีกครั้ง
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- Web Audio API Synth Engine ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let soundEnabled = true;
+
+        function playSound(type) {
+            if (!soundEnabled) return;
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            const now = audioCtx.currentTime;
+            switch(type) {
+                case 'correct':
+                    // Arpeggio sound
+                    let osc1 = audioCtx.createOscillator();
+                    let gain1 = audioCtx.createGain();
+                    osc1.type = 'triangle';
+                    osc1.frequency.setValueAtTime(523.25, now); // C5
+                    osc1.frequency.setValueAtTime(659.25, now + 0.1); // E5
+                    osc1.frequency.setValueAtTime(783.99, now + 0.2); // G5
+                    osc1.frequency.setValueAtTime(1046.50, now + 0.3); // C6
+                    gain1.gain.setValueAtTime(0.3, now);
+                    gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                    osc1.connect(gain1);
+                    gain1.connect(audioCtx.destination);
+                    osc1.start(now);
+                    osc1.stop(now + 0.5);
+                    break;
+                case 'wrong':
+                    // Harsh low slide sound
+                    let osc2 = audioCtx.createOscillator();
+                    let gain2 = audioCtx.createGain();
+                    osc2.type = 'sawtooth';
+                    osc2.frequency.setValueAtTime(180, now);
+                    osc2.frequency.linearRampToValueAtTime(90, now + 0.4);
+                    gain2.gain.setValueAtTime(0.3, now);
+                    gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+                    osc2.connect(gain2);
+                    gain2.connect(audioCtx.destination);
+                    osc2.start(now);
+                    osc2.stop(now + 0.4);
+                    break;
+                case 'countdown':
+                    // Short blip
+                    let osc3 = audioCtx.createOscillator();
+                    let gain3 = audioCtx.createGain();
+                    osc3.type = 'sine';
+                    osc3.frequency.setValueAtTime(440, now);
+                    gain3.gain.setValueAtTime(0.15, now);
+                    gain3.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+                    osc3.connect(gain3);
+                    gain3.connect(audioCtx.destination);
+                    osc3.start(now);
+                    osc3.stop(now + 0.08);
+                    break;
+                case 'gameover':
+                    // Descending sad tune
+                    let osc4 = audioCtx.createOscillator();
+                    let gain4 = audioCtx.createGain();
+                    osc4.type = 'sine';
+                    osc4.frequency.setValueAtTime(300, now);
+                    osc4.frequency.setValueAtTime(250, now + 0.2);
+                    osc4.frequency.setValueAtTime(200, now + 0.4);
+                    osc4.frequency.linearRampToValueAtTime(100, now + 0.8);
+                    gain4.gain.setValueAtTime(0.3, now);
+                    gain4.gain.exponentialRampToValueAtTime(0.01, now + 0.8);
+                    osc4.connect(gain4);
+                    gain4.connect(audioCtx.destination);
+                    osc4.start(now);
+                    osc4.stop(now + 0.8);
+                    break;
+                case 'victory':
+                    // Uplifting fanfare
+                    [523.25, 659.25, 783.99, 1046.50].forEach((f, i) => {
+                        let osc = audioCtx.createOscillator();
+                        let gain = audioCtx.createGain();
+                        osc.type = 'square';
+                        osc.frequency.setValueAtTime(f, now + i*0.1);
+                        gain.gain.setValueAtTime(0.15, now + i*0.1);
+                        gain.gain.exponentialRampToValueAtTime(0.01, now + i*0.1 + 0.4);
+                        osc.connect(gain);
+                        gain.connect(audioCtx.destination);
+                        osc.start(now + i*0.1);
+                        osc.stop(now + i*0.1 + 0.4);
+                    });
+                    break;
+            }
+        }
+
+        // --- Sound UI Handler ---
+        document.getElementById('btn-sound').addEventListener('click', () => {
+            soundEnabled = !soundEnabled;
+            document.getElementById('btn-sound').innerText = soundEnabled ? "🔊 เปิดเสียง" : "🔇 ปิดเสียง";
+        });
+
+        // --- Game Database ---
+        const poolSingle = ["ข้าว", "ข้าวโพด", "อ้อย", "ไผ่", "มะพร้าว", "กล้วย", "ปาล์ม", "กล้วยไม้"];
+        const poolDouble = ["มะม่วง", "ทุเรียน", "มะเขือเทศ", "กะเพรา", "ถั่วฝักยาว", "มะนาพ", "พริก"];
+        let questionList = [];
+
+        function generateQuestions() {
+            let list = [];
+            // ดึงพืชใบเลี้ยงเดี่ยว 8 ชนิด
+            poolSingle.forEach(p => list.push({ name: p, type: "พืชใบเลี้ยงเดี่ยว" }));
+            // ดึงพืชใบเลี้ยงคู่ 7 ชนิด
+            poolDouble.forEach(p => list.push({ name: p, type: "พืชใบเลี้ยงคู่" }));
+            
+            // สับเปลี่ยนตำแหน่งโจทย์ (Shuffle)
+            return list.sort(() => Math.random() - 0.5).slice(0, 15);
+        }
+
+        // --- Game State Variables ---
+        let currentIdx = 0;
+        let score = 0;
+        let hearts = 3;
+        let correctCount = 0;
+        let wrongCount = 0;
+        let activeLanesData = ["", "", ""]; // ข้อความตัวเลือกในแต่ละเลน
+        let correctLaneIdx = 0;
+        
+        let questionTimeLeft = 15; // 15 วินาทีต่อข้อ
+        let timerInterval = null;
+
+        let playerLane = 1; // 0=ซ้าย, 1=กลาง, 2=ขวา
+        let lastLane = 1;
+        let laneHoldTime = 0; // เก็บเวลาที่อยู่ในเลนนั้นๆ (วินาที)
+        const HOLD_DURATION = 1.0; // ต้องค้างไว้ 1 วินาที
+
+        // Particles System
+        let particles = [];
+        // Grid Animation properties
+        let gridOffsetY = 0;
+
+        // UI Setup
+        const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('canvas');
+        const ctx = canvasElement.getContext('2d');
+        const flashEffect = document.getElementById('flash-effect');
+        const container = document.getElementById('game-container');
+
+        // --- Setup Resize ---
+        function resizeCanvas() {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // --- Game Loop (Particles & Backdrop Grid @ 60FPS) ---
+        function animate() {
+            // ล้างหน้าจอใสเพื่อแสดงภาพซ้อนทับกล้อง
+            ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            // Draw 3D-like Animated Background Grid on bottom half
+            drawGrid();
+
+            // Draw Skeleton & Player Trackers if pose available
+            drawSkeleton();
+
+            // Draw Quiz UI boxes in AR space (3 Lanes at bottom)
+            drawLaneUI();
+
+            // Update & Draw Particles
+            updateParticles();
+
+            requestAnimationFrame(animate);
+        }
+
+        function drawGrid() {
+            gridOffsetY = (gridOffsetY + 4) % 40; // ความเร็วของ Grid เลื่อนเข้าหาตัว
+            ctx.strokeStyle = "rgba(0, 255, 204, 0.15)";
+            ctx.lineWidth = 2;
+
+            const horizon = canvasElement.height * 0.65;
+            const w = canvasElement.width;
+            const h = canvasElement.height;
+
+            // Horizontal lines (perspective)
+            for(let y = horizon; y < h; y += 30) {
+                let adjustedY = y + (gridOffsetY * ((y - horizon) / (h - horizon)));
+                if (adjustedY > h) continue;
+                ctx.beginPath();
+                ctx.moveTo(0, adjustedY);
+                ctx.lineTo(w, adjustedY);
+                ctx.stroke();
+            }
+
+            // Vertical Vanishing lines
+            const totalLines = 12;
+            for(let i = 0; i <= totalLines; i++) {
+                let xTop = (w / totalLines) * i;
+                let xBottom = ((xTop - w/2) * 2.5) + w/2; // Perspective stretch
+                ctx.beginPath();
+                ctx.moveTo(xTop, horizon);
+                ctx.lineTo(xBottom, h);
+                ctx.stroke();
+            }
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.alpha -= 0.02;
+                p.size *= 0.96;
+                if (p.alpha <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+                ctx.save();
+                ctx.globalAlpha = p.alpha;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = p.color;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function createExplosion(x, y, color) {
+            for(let i = 0; i < 30; i++) {
+                let angle = Math.random() * Math.PI * 2;
+                let speed = Math.random() * 8 + 4;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: Math.random() * 6 + 4,
+                    alpha: 1.0,
+                    color: color
+                });
+            }
+        }
+
+        // --- Pose Data Variables ---
+        let latestPoseLandmarks = null;
+        let midPointX = 0.5; // Normalized 0 to 1
+
+        function onPoseResults(results) {
+            if (results.poseLandmarks) {
+                latestPoseLandmarks = results.poseLandmarks;
+                
+                // คำนวณ MidPoint ตามสูตร: (Left Shoulder + Right Shoulder + Left Hip + Right Hip) / 4
+                // MediaPipe Index: L_Shoulder=11, R_Shoulder=12, L_Hip=23, R_Hip=24
+                const ls = latestPoseLandmarks[11];
+                const rs = latestPoseLandmarks[12];
+                const lh = latestPoseLandmarks[23];
+                const rh = latestPoseLandmarks[24];
+
+                if(ls && rs && lh && rh) {
+                    midPointX = (ls.x + rs.x + lh.x + rh.x) / 4;
+                    
+                    // วิเคราะห์การเลือกเลน (ภาพถูก Mirror บน Canvas ดังนั้นกล้องจริงซ้ายมือ = ขวาจอ)
+                    // ค่า x ของ MediaPipe จาก 0(ซ้ายสุดกล้อง) ถึง 1(ขวาสุดกล้อง)
+                    if (midPointX < 0.42) {
+                        playerLane = 2; // ขวาจอผู้เล่น (ซ้ายของภาพกล้องเดิม)
+                    } else if (midPointX > 0.58) {
+                        playerLane = 0; // ซ้ายจอผู้เล่น
+                    } else {
+                        playerLane = 1; // เลนกลาง
+                    }
+                    
+                    // ตรวจสอบการนับเวลาค้างเลน
+                    checkLaneSelection();
+                }
+            }
+            
+            // วาดภาพวิดีโอสดซ้อนลงพื้นหลัง Canvas
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.drawImage(results.image, -canvasElement.width, 0, canvasElement.width, canvasElement.height);
+            ctx.restore();
+            
+            // ซ่อนหน้าโหลดเมื่อจับภาพเฟรมแรกได้
+            document.getElementById('loading-screen').classList.add('hidden');
+        }
+
+        function drawSkeleton() {
+            if (!latestPoseLandmarks) return;
+            
+            const w = canvasElement.width;
+            const h = canvasElement.height;
+
+            // ฟังก์ชันแปลงพิกัด Mirror
+            const getPt = (lm) => ({ x: (1 - lm.x) * w, y: lm.y * h });
+
+            // จุดเด่นที่ต้องการดึงมาแสดงตามโจทย์ (ศีรษะ, ไหล่, สะโพก, เข่า)
+            // Nose=0, L_Shoulder=11, R_Shoulder=12, L_Hip=23, R_Hip=24, L_Knee=25, R_Knee=26
+            const indices = [0, 11, 12, 23, 24, 25, 26];
+            
+            ctx.strokeStyle = "rgba(0, 234, 255, 0.4)";
+            ctx.lineWidth = 4;
+            
+            // วาดเส้นโครงสร้างหลักแบบโปร่งใส (ไหล่ไปสะโพก)
+            ctx.beginPath();
+            let pt11 = getPt(latestPoseLandmarks[11]);
+            let pt12 = getPt(latestPoseLandmarks[12]);
+            let pt23 = getPt(latestPoseLandmarks[23]);
+            let pt24 = getPt(latestPoseLandmarks[24]);
+            
+            ctx.moveTo(pt11.x, pt11.y); ctx.lineTo(pt12.x, pt12.y);
+            ctx.lineTo(pt24.x, pt24.y); ctx.lineTo(pt23.x, pt23.y);
+            ctx.closePath();
+            ctx.stroke();
+
+            // เชื่อมเข่า
+            let pt25 = getPt(latestPoseLandmarks[25]);
+            let pt26 = getPt(latestPoseLandmarks[26]);
+            ctx.beginPath();
+            ctx.moveTo(pt23.x, pt23.y); ctx.lineTo(pt25.x, pt25.y);
+            ctx.moveTo(pt24.x, pt24.y); ctx.lineTo(pt26.x, pt26.y);
+            ctx.stroke();
+
+            // วาดข้อต่อเรืองแสงแบบใส
+            indices.forEach(idx => {
+                let pt = getPt(latestPoseLandmarks[idx]);
+                ctx.fillStyle = "rgba(0, 255, 204, 0.6)";
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = "#00ffcc";
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.shadowBlur = 0; // reset
+
+            // วาดจุดกึ่งกลาง Center Balance Point ของผู้เล่น
+            let cX = (1 - midPointX) * w;
+            let cY = (pt11.y + pt12.y + pt23.y + pt24.y) / 4;
+            ctx.fillStyle = "#ff0077";
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = "#ff0077";
+            ctx.beginPath();
+            ctx.arc(cX, cY, 14, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        function drawLaneUI() {
+            const w = canvasElement.width;
+            const h = canvasElement.height;
+            const boxW = w / 3 - 40;
+            const boxH = 90;
+            const boxY = h - 140;
+
+            for (let i = 0; i < 3; i++) {
+                let boxX = (w / 3) * i + 20;
+                let isCurrent = (playerLane === i);
+
+                ctx.save();
+                // Effect Glassmorphism Neon Glow
+                ctx.fillStyle = isCurrent ? "rgba(255, 255, 255, 0.2)" : "rgba(15, 23, 42, 0.6)";
+                ctx.strokeStyle = isCurrent ? "#00ffcc" : "rgba(255,255,255,0.3)";
+                ctx.lineWidth = isCurrent ? 5 : 2;
+                if (isCurrent) {
+                    ctx.shadowBlur = 25;
+                    ctx.shadowColor = "#00ffcc";
+                }
+
+                // วาดกล่องตัวเลือกทรงมน
+                ctx.beginPath();
+                ctx.roundRect(boxX, boxY, boxW, boxH, 16);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+
+                // แสดงข้อความตัวเลือก
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 24px Prompt";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(activeLanesData[i], boxX + boxW / 2, boxY + boxH / 2);
+
+                // หากกำลังยืนค้างอยู่ในเลน ให้วาดวงกลม Progress นับถอยหลังรอบตัวเลือก
+                if (isCurrent && activeLanesData[i] !== "") {
+                    let centerX = boxX + boxW / 2;
+                    let centerY = boxY + boxH / 2;
+                    let progress = laneHoldTime / HOLD_DURATION;
+
+                    ctx.strokeStyle = "#ff0077";
+                    ctx.lineWidth = 6;
+                    ctx.beginPath();
+                    // วาดวงรอบกล่อง
+                    ctx.arc(centerX, centerY - 32, 12, -Math.PI/2, (-Math.PI/2) + (Math.PI * 2 * progress));
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // --- Logic Game Flow ---
+        function checkLaneSelection() {
+            if (playerLane === lastLane) {
+                // ถ้ายังอยู่เลนเดิม ให้นับเวลาสะสม (คิดจาก fps หรือ delta)
+                // เนื่องจากความถี่ขึ้นกับ MediaPipe Frame ในที่นี้จำลองการบวกเวลาประมาณ ~30-60fps
+                laneHoldTime += 0.033; // ~33ms ต่อเฟรม
+                if (laneHoldTime >= HOLD_DURATION) {
+                    laneHoldTime = 0; // reset
+                    submitAnswer(playerLane);
+                }
+            } else {
+                // เปลี่ยนเลน ย้ายตำแหน่งให้นับหนึ่งใหม่
+                lastLane = playerLane;
+                laneHoldTime = 0;
+                if (activeLanesData[playerLane] !== "") {
+                    playSound('countdown');
+                }
+            }
+        }
+
+        function initGame() {
+            questionList = generateQuestions();
+            currentIdx = 0;
+            score = 0;
+            hearts = 3;
+            correctCount = 0;
+            wrongCount = 0;
+            
+            document.getElementById('end-screen').classList.add('hidden');
+            updateUIInfo();
+            nextQuestion();
+        }
+
+        function nextQuestion() {
+            if (currentIdx >= 15 || hearts <= 0) {
+                endGame();
+                return;
+            }
+
+            // รีเซ็ตตัวแปรเวลาข้อใหม่
+            questionTimeLeft = 15;
+            updateTimerBar();
+            clearInterval(timerInterval);
+            
+            let currentQ = questionList[currentIdx];
+            document.getElementById('ui-current-question').innerText = currentIdx + 1;
+            document.getElementById('ui-question').innerText = `"${currentQ.name}" คือพืชชนิดใด?`;
+
+            // สุ่มกระจายช้อยส์ลง 3 เลน (มี 1 เลนถูก, 1 เลนผิดหลอก, 1 เลนว่าง)
+            let choices = [currentQ.type, (currentQ.type === "พืชใบเลี้ยงเดี่ยว" ? "พืชใบเลี้ยงคู่" : "พืชใบเลี้ยงเดี่ยว"), ""];
+            // Shuffle choices เฉพาะ 3 ช่องนี้
+            choices = choices.sort(() => Math.random() - 0.5);
+
+            activeLanesData = choices;
+            correctLaneIdx = choices.indexOf(currentQ.type);
+            laneHoldTime = 0; // รีเซ็ตเวลาเหยียบเลน
+
+            // เริ่มนับถอยหลังเวลาของข้อนี้
+            timerInterval = setInterval(() => {
+                questionTimeLeft -= 1;
+                updateTimerBar();
+
+                if (questionTimeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    // หมดเวลา = ตอบผิด
+                    handleIncorrectEffect("หมดเวลา!");
+                    currentIdx++;
+                    setTimeout(nextQuestion, 1200);
+                }
+            }, 1000);
+        }
+
+        function updateTimerBar() {
+            const bar = document.getElementById('ui-timer-bar');
+            const pct = (questionTimeLeft / 15) * 100;
+            bar.style.width = `${pct}%`;
+            if(pct < 30) {
+                bar.className = "bg-gradient-to-r from-red-500 to-orange-500 h-full w-full transition-all duration-100 ease-linear";
+            } else {
+                bar.className = "bg-gradient-to-r from-cyan-400 to-emerald-400 h-full w-full transition-all duration-100 ease-linear";
+            }
+        }
+
+        function submitAnswer(chosenLaneIdx) {
+            clearInterval(timerInterval);
+            
+            // ตรวจสอบว่าเลือกช่องว่างหรือไม่
+            if (activeLanesData[chosenLaneIdx] === "") {
+                // เลนว่างเปล่า ไม่มีคำตอบ ให้ไม่เกิดอะไรขึ้นแล้วเริ่มจับเวลาต่อ
+                nextQuestion();
+                return;
+            }
+
+            if (chosenLaneIdx === correctLaneIdx) {
+                // ตอบถูก
+                score += 10;
+                correctCount++;
+                playSound('correct');
+                
+                // Trigger Visual Feedback Effects
+                triggerFlash('green');
+                createExplosion((canvasElement.width / 3) * chosenLaneIdx + (canvasElement.width / 6), canvasElement.height - 100, "#00ffcc");
+                showFloatingScore(`+10`, chosenLaneIdx);
+            } else {
+                // ตอบผิด
+                handleIncorrectEffect("ผิด!");
+            }
+
+            currentIdx++;
+            updateUIInfo();
+            
+            // รอเอฟเฟกต์จบครู่หนึ่งค่อยเปิดข้อถัดไป
+            setTimeout(nextQuestion, 1200);
+        }
+
+        function handleIncorrectEffect(msg) {
+            hearts--;
+            wrongCount++;
+            playSound('wrong');
+            triggerFlash('red');
+            container.classList.add('shake');
+            setTimeout(() => container.classList.remove('shake'), 400);
+            
+            showFloatingScore(msg, playerLane, "#ff0044");
+            updateUIInfo();
+        }
+
+        function triggerFlash(type) {
+            flashEffect.classList.remove('flash-green', 'flash-red');
+            void flashEffect.offsetWidth; // trigger reflow
+            flashEffect.classList.add(type === 'green' ? 'flash-green' : 'flash-red');
+        }
+
+        function showFloatingScore(text, laneIdx, color = "#fbbf24") {
+            const fContainer = document.getElementById('float-score-container');
+            const element = document.createElement('div');
+            element.className = "absolute text-4xl font-extrabold animate-bounce transition-all pointer-events-none duration-1000";
+            element.style.left = `${(window.innerWidth / 3) * laneIdx + (window.innerWidth / 6) - 30}px`;
+            element.style.top = `${window.innerHeight - 250}px`;
+            element.style.color = color;
+            element.style.textShadow = `0 0 10px ${color}`;
+            element.innerText = text;
+            
+            fContainer.appendChild(element);
+            setTimeout(() => element.remove(), 1000);
+        }
+
+        function updateUIInfo() {
+            document.getElementById('ui-score').innerText = score;
+            let heartStr = "";
+            for (let i = 0; i < 3; i++) {
+                heartStr += (i < hearts) ? "❤️ " : "🖤 ";
+            }
+            document.getElementById('ui-hearts').innerText = heartStr;
+        }
+
+        function endGame() {
+            clearInterval(timerInterval);
+            document.getElementById('end-screen').classList.remove('hidden');
+            
+            document.getElementById('end-score').innerText = score;
+            document.getElementById('end-correct').innerText = `${correctCount} ข้อ`;
+            document.getElementById('end-wrong').innerText = `${wrongCount} ข้อ`;
+            
+            let totalAnswered = correctCount + wrongCount;
+            let accuracy = totalAnswered > 0 ? Math.round((correctCount / 15) * 100) : 0;
+            document.getElementById('end-accuracy').innerText = `${accuracy}%`;
+
+            if (hearts <= 0) {
+                document.getElementById('end-title').innerText = "GAME OVER";
+                document.getElementById('end-title').style.color = "#ff0055";
+                playSound('gameover');
+            } else {
+                document.getElementById('end-title').innerText = "VICTORY ชนะแล้ว!";
+                document.getElementById('end-title').style.color = "#00ffcc";
+                playSound('victory');
+            }
+        }
+
+        document.getElementById('btn-restart').addEventListener('click', initGame);
+
+        // --- MediaPipe Pose Setup & Camera Link ---
+        const pose = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            smoothSegmentation: false,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        pose.onResults(onPoseResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await pose.send({ image: videoElement });
+            },
+            width: 640,
+            height: 480
+        });
+
+        // เปิดใช้งานกล้องเว็บบอร์ดและเริ่มลูปเกม
+        camera.start().then(() => {
+            initGame();
+            animate();
+        }).catch(err => {
+            alert("ไม่สามารถเข้าถึงกล้องถ่ายรูปของคุณได้: " + err);
+        });
+
+    </script>
+</body>
+</html>
